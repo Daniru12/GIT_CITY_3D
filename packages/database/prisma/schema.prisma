@@ -1,0 +1,347 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum DistrictStatus {
+  ACTIVE
+  LOCKED
+  FULL
+}
+
+enum PlotStatus {
+  AVAILABLE
+  CLAIMED
+  RESERVED
+}
+
+enum BuildingType {
+  DEVELOPER_HOUSE
+  CODING_STUDIO
+  MINI_OFFICE
+}
+
+enum Privacy {
+  PUBLIC
+  FRIENDS
+  PRIVATE
+}
+
+enum RoomKind {
+  PRIVATE
+  FRIENDS
+  PUBLIC
+  TEAM
+}
+
+enum RoomStatus {
+  ACTIVE
+  CLOSED
+  EXPIRED
+}
+
+enum RoomRole {
+  OWNER
+  MODERATOR
+  VISITOR
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+}
+
+enum GameStatus {
+  LOBBY
+  RUNNING
+  COMPLETED
+  CANCELLED
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+model User {
+  id                 String   @id @default(cuid())
+  githubId           BigInt   @unique
+  username           String
+  displayName        String?
+  avatarUrl          String?
+  bio                String?
+  role               Role     @default(USER)
+  onboardingStep     Int      @default(0)
+  onboardingComplete Boolean  @default(false)
+  // AES-256-GCM encrypted GitHub token (only retained if needed for refresh)
+  githubTokenEnc     String?
+  githubStats         Json?
+  githubSyncedAt      DateTime?
+  bannedAt           DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  settings     UserSettings?
+  avatar       Avatar?
+  sessions     Session[]
+  buildings    Building[]
+  plots        Plot[]
+  rooms        Room[]
+  repos        GitHubRepositoryCache[]
+  chatMessages ChatMessage[]
+  sentFriend   Friendship[] @relation("requester")
+  recvFriend   Friendship[] @relation("receiver")
+  results      MiniGameResult[]
+  reportsMade  Report[] @relation("reporter")
+  reportsOn    Report[] @relation("reported")
+  invitations  RoomInvitation[]
+  memberships  RoomMember[]
+
+  @@index([username])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
+  lastSeenAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model UserSettings {
+  userId       String @id
+  user         User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  privacy      Json   @default("{}")
+  notifications Json  @default("{}")
+  graphics     Json   @default("{}")
+  chat         Json   @default("{}")
+}
+
+model Avatar {
+  id         String @id @default(cuid())
+  userId     String @unique
+  user       User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appearance Json   @default("{}")
+  cosmetics  Json   @default("[]")
+}
+
+model District {
+  id        String         @id @default(cuid())
+  name      String         @unique
+  theme     String
+  originX   Int
+  originZ   Int
+  capacity  Int
+  status    DistrictStatus @default(ACTIVE)
+  createdAt DateTime       @default(now())
+  plots     Plot[]
+
+  @@unique([originX, originZ])
+}
+
+model Plot {
+  id         String     @id @default(cuid())
+  districtId String
+  district   District   @relation(fields: [districtId], references: [id])
+  gridX      Int
+  gridZ      Int
+  slotKey    String     @unique // stable slot id from the deterministic city generator
+  status     PlotStatus @default(AVAILABLE)
+  ownerId    String?
+  owner      User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  claimedAt  DateTime?
+  building   Building?
+
+  @@unique([districtId, gridX, gridZ])
+  @@index([districtId, status])
+}
+
+model Building {
+  id             String       @id @default(cuid())
+  plotId         String       @unique
+  plot           Plot         @relation(fields: [plotId], references: [id])
+  ownerId        String       @unique // one building per developer
+  owner          User         @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name           String
+  type           BuildingType
+  exterior       Json         @default("{}")
+  interior       Json         @default("{}")
+  privacy        Privacy      @default(PUBLIC)
+  welcomeMessage String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  furniture FurniturePlacement[]
+  rooms     Room[]
+
+}
+
+model FurniturePlacement {
+  id         String   @id @default(cuid())
+  buildingId String
+  building   Building @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  assetId    String
+  position   Json
+  rotation   Json
+  scale      Json
+  config     Json     @default("{}")
+
+  @@index([buildingId])
+}
+
+model Room {
+  id         String     @id @default(cuid())
+  buildingId String?
+  building   Building?  @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+  ownerId    String
+  owner      User       @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  name       String
+  kind       RoomKind   @default(PRIVATE)
+  capacity   Int        @default(16)
+  status     RoomStatus @default(ACTIVE)
+  expiresAt  DateTime?
+  createdAt  DateTime   @default(now())
+
+  invitations RoomInvitation[]
+  members     RoomMember[]
+  messages    ChatMessage[]
+  games       MiniGameSession[]
+
+  @@index([ownerId])
+}
+
+model RoomMember {
+  roomId String
+  userId String
+  role   RoomRole @default(VISITOR)
+  room   Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, userId])
+}
+
+model RoomInvitation {
+  id        String    @id @default(cuid())
+  roomId    String
+  room      Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  creatorId String
+  creator   User      @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime?
+  revokedAt DateTime?
+  maxUses   Int?
+  usedCount Int       @default(0)
+  createdAt DateTime  @default(now())
+
+  @@index([roomId])
+}
+
+model Friendship {
+  id          String           @id @default(cuid())
+  requesterId String
+  receiverId  String
+  requester   User             @relation("requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  receiver    User             @relation("receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  status      FriendshipStatus @default(PENDING)
+  createdAt   DateTime         @default(now())
+
+  @@unique([requesterId, receiverId])
+  @@index([receiverId, status])
+}
+
+model ChatMessage {
+  id        String   @id @default(cuid())
+  senderId  String
+  sender    User     @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  roomId    String?
+  room      Room?    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  message   String
+  createdAt DateTime @default(now())
+
+  @@index([roomId, createdAt])
+}
+
+model GitHubRepositoryCache {
+  id                 String   @id @default(cuid())
+  userId             String
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  githubRepositoryId BigInt
+  name               String
+  description        String?
+  language           String?
+  stars              Int      @default(0)
+  repositoryUrl      String
+  featured           Boolean  @default(false)
+  lastSyncedAt       DateTime @default(now())
+
+  @@unique([userId, githubRepositoryId])
+}
+
+model MiniGameSession {
+  id          String     @id @default(cuid())
+  gameType    String
+  roomId      String?
+  room        Room?      @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  status      GameStatus @default(LOBBY)
+  startedAt   DateTime?
+  completedAt DateTime?
+  results     MiniGameResult[]
+}
+
+model MiniGameResult {
+  id        String          @id @default(cuid())
+  sessionId String
+  session   MiniGameSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  score     Int
+  rank      Int
+
+  @@unique([sessionId, userId])
+}
+
+model Report {
+  id             String       @id @default(cuid())
+  reporterId     String
+  reportedUserId String
+  reporter       User         @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported       User         @relation("reported", fields: [reportedUserId], references: [id], onDelete: Cascade)
+  reason         String
+  status         ReportStatus @default(OPEN)
+  createdAt      DateTime     @default(now())
+
+  @@index([status])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String
+  metadata   Json     @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([targetType, targetId])
+}

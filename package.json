@@ -1,0 +1,27 @@
+{
+  "name": "gitcity-3d",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "start:local": "node scripts/dev-local.mjs",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @gitcity/database generate",
+    "db:migrate": "pnpm --filter @gitcity/database migrate",
+    "infra:up": "docker compose up -d postgres redis"
+  },
+  "devDependencies": {
+    "embedded-postgres": "18.6.0-beta.19",
+    "prettier": "^3.3.3",
+    "turbo": "^2.3.0",
+    "typescript": "^5.6.3"
+  }
+}
